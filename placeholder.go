@@ -1,4 +1,4 @@
-package gesql
+package esqlc
 
 import (
 	"strconv"

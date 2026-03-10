@@ -1,4 +1,4 @@
-package gesql
+package esqlc
 
 import (
 	"fmt"
@@ -44,13 +44,13 @@ func (r *Registry) MustGet(name string) *Query {
 func (r *Registry) Load(path string) error {
 	f, err := os.Open(path)
 	if err != nil {
-		return fmt.Errorf("gesql: open %s: %w", path, err)
+		return fmt.Errorf("esqlc: open %s: %w", path, err)
 	}
 	defer f.Close()
 
 	queries, err := parse(f)
 	if err != nil {
-		return fmt.Errorf("gesql: parse %s: %w", path, err)
+		return fmt.Errorf("esqlc: parse %s: %w", path, err)
 	}
 
 	return r.merge(path, queries)
@@ -61,13 +61,13 @@ func (r *Registry) Load(path string) error {
 func (r *Registry) LoadFS(fsys fs.FS, path string) error {
 	f, err := fsys.Open(path)
 	if err != nil {
-		return fmt.Errorf("gesql: open %s: %w", path, err)
+		return fmt.Errorf("esqlc: open %s: %w", path, err)
 	}
 	defer f.Close()
 
 	queries, err := parse(f)
 	if err != nil {
-		return fmt.Errorf("gesql: parse %s: %w", path, err)
+		return fmt.Errorf("esqlc: parse %s: %w", path, err)
 	}
 
 	return r.merge(path, queries)
@@ -78,7 +78,7 @@ func (r *Registry) LoadFS(fsys fs.FS, path string) error {
 func (r *Registry) merge(path string, queries map[string]string) error {
 	for name, sql := range queries {
 		if _, exists := r.queries[name]; exists {
-			return fmt.Errorf("gesql: duplicate query name %q in %s", name, path)
+			return fmt.Errorf("esqlc: duplicate query name %q in %s", name, path)
 		}
 		r.queries[name] = sql
 	}
@@ -90,7 +90,7 @@ func (r *Registry) merge(path string, queries map[string]string) error {
 func (r *Registry) LoadDir(dir string) error {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return fmt.Errorf("gesql: read dir %s: %w", dir, err)
+		return fmt.Errorf("esqlc: read dir %s: %w", dir, err)
 	}
 
 	for _, entry := range entries {
@@ -110,7 +110,7 @@ func (r *Registry) LoadDir(dir string) error {
 func (r *Registry) WalkFS(fsys fs.FS, dir string) error {
 	entries, err := fs.ReadDir(fsys, dir)
 	if err != nil {
-		return fmt.Errorf("gesql: read dir %s: %w", dir, err)
+		return fmt.Errorf("esqlc: read dir %s: %w", dir, err)
 	}
 
 	for _, entry := range entries {

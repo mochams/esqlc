@@ -1,3 +1,3 @@
-module github.com/mochams/gesql
+module github.com/mochams/esqlc
 
 go 1.25.0

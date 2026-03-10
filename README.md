@@ -1,6 +1,6 @@
-# gesql — Go Enhanced SQL
+# esqlc — Go Enhanced SQL
 
-**gesql** is a lightweight SQL toolkit for Go that lets you:
+**esqlc** is a lightweight SQL toolkit for Go that lets you:
 
 * keep SQL in `.sql` files (yesql-style)
 * load queries by name
@@ -10,7 +10,7 @@ No ORM. No DSL. Just **SQL with powerful runtime composition**.
 
 ---
 
-## Why gesql?
+## Why esqlc?
 
 Many Go applications prefer keeping SQL **in `.sql` files** instead of embedding it in code. This keeps queries readable, easier to review, and easier to evolve as they grow in complexity.
 
@@ -25,7 +25,7 @@ However, real-world APIs often need to **dynamically respond to request paramete
 
 This usually leads to manually assembling SQL strings in code.
 
-**gesql bridges this gap.**
+**esqlc bridges this gap.**
 
 You can:
 
@@ -40,9 +40,9 @@ SELECT * FROM users
 
 ```go
 sql, args := reg.MustGet("listUsers").
-    Where(gesql.And(
-        gesql.Eq("status", "active"),
-        gesql.Gt("age", 18),
+    Where(esqlc.And(
+        esqlc.Eq("status", "active"),
+        esqlc.Gt("age", 18),
     )).
     OrderBy("created_at DESC").
     Limit(20).
@@ -79,7 +79,7 @@ This keeps your **core SQL declarative**, while allowing **flexible runtime filt
 ## Installation
 
 ```bash
-go get github.com/mochams/gesql
+go get github.com/mochams/esqlc
 ```
 
 ---
@@ -89,10 +89,10 @@ go get github.com/mochams/gesql
 ### Ad-hoc queries
 
 ```go
-sql, args := gesql.NewQuery("SELECT * FROM users").
-    Where(gesql.And(
-        gesql.Eq("status", "active"),
-        gesql.Gt("age", 18),
+sql, args := esqlc.NewQuery("SELECT * FROM users").
+    Where(esqlc.And(
+        esqlc.Eq("status", "active"),
+        esqlc.Gt("age", 18),
     )).
     OrderBy("created_at DESC").
     Limit(20).
@@ -138,7 +138,7 @@ AND deleted_at IS NULL
 Load and use them:
 
 ```go
-reg := gesql.NewRegistry()
+reg := esqlc.NewRegistry()
 
 if err := reg.Load("queries/users.sql"); err != nil {
     log.Fatal(err)
@@ -147,7 +147,7 @@ if err := reg.Load("queries/users.sql"); err != nil {
 q := reg.MustGet("listUsers")
 
 sql, args := q.
-    Where(gesql.Eq("role", "admin")).
+    Where(esqlc.Eq("role", "admin")).
     OrderBy("created_at DESC").
     Limit(10).
     Build()
@@ -163,7 +163,7 @@ Works with Go's `embed`.
 //go:embed queries
 var sqlFiles embed.FS
 
-reg := gesql.NewRegistry()
+reg := esqlc.NewRegistry()
 
 if err := reg.WalkFS(sqlFiles, "queries"); err != nil {
     log.Fatal(err)
@@ -177,22 +177,22 @@ if err := reg.WalkFS(sqlFiles, "queries"); err != nil {
 ### Simple conditions
 
 ```go
-gesql.Cond("age > ?", 30)
+esqlc.Cond("age > ?", 30)
 
-gesql.Eq("status", "active")
-gesql.Neq("status", "banned")
+esqlc.Eq("status", "active")
+esqlc.Neq("status", "banned")
 
-gesql.Lt("age", 18)
-gesql.Lte("age", 18)
+esqlc.Lt("age", 18)
+esqlc.Lte("age", 18)
 
-gesql.Gt("age", 65)
-gesql.Gte("age", 65)
+esqlc.Gt("age", 65)
+esqlc.Gte("age", 65)
 
-gesql.Like("name", "%john%")
-gesql.ILike("name", "%john%") // Postgres only
+esqlc.Like("name", "%john%")
+esqlc.ILike("name", "%john%") // Postgres only
 
-gesql.IsNull("deleted_at")
-gesql.IsNotNull("deleted_at")
+esqlc.IsNull("deleted_at")
+esqlc.IsNotNull("deleted_at")
 ```
 
 ---
@@ -200,9 +200,9 @@ gesql.IsNotNull("deleted_at")
 ### Range conditions
 
 ```go
-gesql.Between("age", 18, 65)
+esqlc.Between("age", 18, 65)
 
-gesql.BetweenExclusive("age", 18, 65)
+esqlc.BetweenExclusive("age", 18, 65)
 ```
 
 ---
@@ -210,9 +210,9 @@ gesql.BetweenExclusive("age", 18, 65)
 ### Set conditions
 
 ```go
-gesql.In("status", "active", "pending")
+esqlc.In("status", "active", "pending")
 
-gesql.NotIn("status", "banned", "deleted")
+esqlc.NotIn("status", "banned", "deleted")
 ```
 
 ---
@@ -220,29 +220,29 @@ gesql.NotIn("status", "banned", "deleted")
 ### Logical combinators
 
 ```go
-gesql.And(
-    gesql.Eq("status", "active"),
-    gesql.Gt("age", 18),
+esqlc.And(
+    esqlc.Eq("status", "active"),
+    esqlc.Gt("age", 18),
 )
 
-gesql.Or(
-    gesql.Eq("role", "admin"),
-    gesql.Eq("role", "mod"),
+esqlc.Or(
+    esqlc.Eq("role", "admin"),
+    esqlc.Eq("role", "mod"),
 )
 
-gesql.Not(
-    gesql.Eq("status", "banned"),
+esqlc.Not(
+    esqlc.Eq("status", "banned"),
 )
 ```
 
 They compose naturally:
 
 ```go
-gesql.And(
-    gesql.Eq("status", "active"),
-    gesql.Or(
-        gesql.Eq("role", "admin"),
-        gesql.Eq("role", "mod"),
+esqlc.And(
+    esqlc.Eq("status", "active"),
+    esqlc.Or(
+        esqlc.Eq("role", "admin"),
+        esqlc.Eq("role", "mod"),
     ),
 )
 ```
@@ -252,12 +252,12 @@ gesql.And(
 ## Query Builder
 
 ```go
-sql, args := gesql.NewQuery(
+sql, args := esqlc.NewQuery(
     "SELECT status, COUNT(*) FROM users",
 ).
-    Where(gesql.IsNotNull("deleted_at")).
+    Where(esqlc.IsNotNull("deleted_at")).
     GroupBy("status").
-    Having(gesql.Gt("COUNT(*)", 5)).
+    Having(esqlc.Gt("COUNT(*)", 5)).
     OrderBy("created_at DESC").
     Limit(10).
     Offset(20).
@@ -268,7 +268,7 @@ sql, args := gesql.NewQuery(
 
 ## SQL Dialects
 
-gesql rewrites placeholders automatically.
+esqlc rewrites placeholders automatically.
 
 ### Postgres (default)
 
@@ -297,9 +297,9 @@ $1, $2, $3
 Example:
 
 ```go
-gesql.NewQuery("SELECT * FROM users").
-    Dialect(gesql.DialectSQLServer).
-    Where(gesql.Eq("id", 1)).
+esqlc.NewQuery("SELECT * FROM users").
+    Dialect(esqlc.DialectSQLServer).
+    Where(esqlc.Eq("id", 1)).
     Build()
 ```
 
@@ -308,7 +308,7 @@ gesql.NewQuery("SELECT * FROM users").
 ## Registry
 
 ```go
-reg := gesql.NewRegistry()
+reg := esqlc.NewRegistry()
 
 // load single file
 reg.Load("queries/users.sql")
@@ -351,7 +351,7 @@ DELETE FROM users WHERE id = ?
 Rules:
 
 * Use `?` placeholders regardless of dialect
-* gesql rewrites placeholders during `Build()`
+* esqlc rewrites placeholders during `Build()`
 * Query names must be unique
 * Empty query bodies are rejected
 
@@ -359,8 +359,8 @@ Rules:
 
 ## Inspiration
 
-gesql is inspired by [**yesql**](https://github.com/krisajenkins/yesql), a Clojure library by Kris Jenkins that encourages writing SQL in SQL rather than embedding it in application code.
+esqlc is inspired by [**yesql**](https://github.com/krisajenkins/yesql), a Clojure library by Kris Jenkins that encourages writing SQL in SQL rather than embedding it in application code.
 
-gesql extends the idea with **composable predicates**, making it easier to build dynamic queries for APIs and search endpoints.
+esqlc extends the idea with **composable predicates**, making it easier to build dynamic queries for APIs and search endpoints.
 
 ---
