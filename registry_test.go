@@ -1,4 +1,4 @@
-package gesql
+package esqlc
 
 import (
 	"io/fs"
@@ -22,7 +22,7 @@ func writeFile(t *testing.T, dir, name, content string) string {
 
 func tempDir(t *testing.T) string {
 	t.Helper()
-	dir, err := os.MkdirTemp("", "gesql-test-*")
+	dir, err := os.MkdirTemp("", "esqlc-test-*")
 	if err != nil {
 		t.Fatalf("tempDir: %v", err)
 	}
