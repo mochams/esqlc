@@ -7,27 +7,27 @@ import (
 func TestQueryBuild(t *testing.T) {
 	tests := []struct {
 		name     string
-		query    *Query
+		query    *query
 		wantSQL  string
 		wantArgs []any
 	}{
 		// --- base SQL only ---
 		{
 			name:    "base SQL only",
-			query:   NewQuery("SELECT * FROM users"),
+			query:   newQuery("SELECT * FROM users", DialectPostgres),
 			wantSQL: "SELECT * FROM users",
 		},
 
 		// --- WHERE ---
 		{
 			name:     "single where condition",
-			query:    NewQuery("SELECT * FROM users").Where(Eq("status", "active")),
+			query:    newQuery("SELECT * FROM users", DialectPostgres).Where(Eq("status", "active")),
 			wantSQL:  "SELECT * FROM users WHERE status = $1",
 			wantArgs: []any{"active"},
 		},
 		{
 			name: "compound where with And",
-			query: NewQuery("SELECT * FROM users").Where(
+			query: newQuery("SELECT * FROM users", DialectPostgres).Where(
 				And(Eq("status", "active"), Gt("age", 18)),
 			),
 			wantSQL:  "SELECT * FROM users WHERE (status = $1 AND age > $2)",
@@ -35,7 +35,7 @@ func TestQueryBuild(t *testing.T) {
 		},
 		{
 			name: "compound where with Or",
-			query: NewQuery("SELECT * FROM users").Where(
+			query: newQuery("SELECT * FROM users", DialectPostgres).Where(
 				Or(Eq("status", "active"), Eq("status", "pending")),
 			),
 			wantSQL:  "SELECT * FROM users WHERE (status = $1 OR status = $2)",
@@ -43,7 +43,7 @@ func TestQueryBuild(t *testing.T) {
 		},
 		{
 			name: "nested predicates in where",
-			query: NewQuery("SELECT * FROM users").Where(
+			query: newQuery("SELECT * FROM users", DialectPostgres).Where(
 				And(
 					Eq("status", "active"),
 					Or(Eq("role", "admin"), Eq("role", "mod")),
@@ -56,35 +56,35 @@ func TestQueryBuild(t *testing.T) {
 		// -- Chaining multiple where calls ---
 		{
 			name: "multiple where calls with And",
-			query: NewQuery("SELECT * FROM users").
+			query: newQuery("SELECT * FROM users", DialectPostgres).
 				Where(Eq("status", "active")).
 				Where(Gt("age", 18)),
-			wantSQL:  "SELECT * FROM users WHERE (status = $1 AND age > $2)",
+			wantSQL:  "SELECT * FROM users WHERE status = $1 AND age > $2",
 			wantArgs: []any{"active", 18},
 		},
 		{
 			name: "multiple complex where calls with And",
-			query: NewQuery("SELECT * FROM users").
+			query: newQuery("SELECT * FROM users", DialectPostgres).
 				Where(Eq("status", "active")).
 				Where(Eq("age", 18)).Where(Or(
 				Eq("role", "admin"),
 				Eq("role", "mod"),
 			)),
-			wantSQL:  "SELECT * FROM users WHERE (status = $1 AND age = $2 AND (role = $3 OR role = $4))",
+			wantSQL:  "SELECT * FROM users WHERE status = $1 AND age = $2 AND (role = $3 OR role = $4)",
 			wantArgs: []any{"active", 18, "admin", "mod"},
 		},
 		{
 			name: "multiple chains with Exclude",
-			query: NewQuery("SELECT * FROM users").Where(Eq("status", "active")).
+			query: newQuery("SELECT * FROM users", DialectPostgres).Where(Eq("status", "active")).
 				Where(Eq("age", 18)).Exclude(Eq("role", "admin")),
-			wantSQL:  "SELECT * FROM users WHERE (status = $1 AND age = $2 AND NOT (role = $3))",
+			wantSQL:  "SELECT * FROM users WHERE status = $1 AND age = $2 AND NOT (role = $3)",
 			wantArgs: []any{"active", 18, "admin"},
 		},
 
 		// --- Exclude ---
 		{
 			name: "exclude with Not",
-			query: NewQuery("SELECT * FROM users").Exclude(
+			query: newQuery("SELECT * FROM users", DialectPostgres).Exclude(
 				Eq("status", "inactive"),
 			),
 			wantSQL:  "SELECT * FROM users WHERE NOT (status = $1)",
@@ -92,7 +92,7 @@ func TestQueryBuild(t *testing.T) {
 		},
 		{
 			name: "exclude with multiple predicates",
-			query: NewQuery("SELECT * FROM users").Exclude(
+			query: newQuery("SELECT * FROM users", DialectPostgres).Exclude(
 				Eq("status", "inactive"),
 				Eq("deleted_at", nil),
 				IsNotNull("user_group"),
@@ -105,7 +105,7 @@ func TestQueryBuild(t *testing.T) {
 		},
 		{
 			name: "exclude with Not and And",
-			query: NewQuery("SELECT * FROM users").Exclude(
+			query: newQuery("SELECT * FROM users", DialectPostgres).Exclude(
 				And(Eq("status", "inactive"), Eq("deleted_at", nil)),
 			),
 			wantSQL:  "SELECT * FROM users WHERE NOT ((status = $1 AND deleted_at = $2))",
@@ -115,17 +115,17 @@ func TestQueryBuild(t *testing.T) {
 		// --- GROUP BY ---
 		{
 			name:    "single group by",
-			query:   NewQuery("SELECT status, COUNT(*) FROM users").GroupBy("status"),
+			query:   newQuery("SELECT status, COUNT(*) FROM users", DialectPostgres).GroupBy("status"),
 			wantSQL: "SELECT status, COUNT(*) FROM users GROUP BY status",
 		},
 		{
 			name:    "multiple group by",
-			query:   NewQuery("SELECT status, role, COUNT(*) FROM users").GroupBy("status", "role"),
+			query:   newQuery("SELECT status, role, COUNT(*) FROM users", DialectPostgres).GroupBy("status", "role"),
 			wantSQL: "SELECT status, role, COUNT(*) FROM users GROUP BY status, role",
 		},
 		{
 			name: "where and group by",
-			query: NewQuery("SELECT status, COUNT(*) FROM users").
+			query: newQuery("SELECT status, COUNT(*) FROM users", DialectPostgres).
 				Where(Eq("deleted_at", nil)).
 				GroupBy("status"),
 			wantSQL:  "SELECT status, COUNT(*) FROM users WHERE deleted_at = $1 GROUP BY status",
@@ -135,7 +135,7 @@ func TestQueryBuild(t *testing.T) {
 		// --- HAVING ---
 		{
 			name: "having",
-			query: NewQuery("SELECT status, COUNT(*) FROM users").
+			query: newQuery("SELECT status, COUNT(*) FROM users", DialectPostgres).
 				GroupBy("status").
 				Having(Gt("COUNT(*)", 5)),
 			wantSQL:  "SELECT status, COUNT(*) FROM users GROUP BY status HAVING COUNT(*) > $1",
@@ -143,7 +143,7 @@ func TestQueryBuild(t *testing.T) {
 		},
 		{
 			name: "where group by and having",
-			query: NewQuery("SELECT status, COUNT(*) FROM users").
+			query: newQuery("SELECT status, COUNT(*) FROM users", DialectPostgres).
 				Where(IsNotNull("deleted_at")).
 				GroupBy("status").
 				Having(Gt("COUNT(*)", 5)),
@@ -154,17 +154,17 @@ func TestQueryBuild(t *testing.T) {
 		// --- ORDER BY ---
 		{
 			name:    "single order by",
-			query:   NewQuery("SELECT * FROM users").OrderBy("created_at DESC"),
+			query:   newQuery("SELECT * FROM users", DialectPostgres).OrderBy("created_at DESC"),
 			wantSQL: "SELECT * FROM users ORDER BY created_at DESC",
 		},
 		{
 			name:    "multiple order by",
-			query:   NewQuery("SELECT * FROM users").OrderBy("last_name ASC", "first_name ASC"),
+			query:   newQuery("SELECT * FROM users", DialectPostgres).OrderBy("last_name ASC", "first_name ASC"),
 			wantSQL: "SELECT * FROM users ORDER BY last_name ASC, first_name ASC",
 		},
 		{
 			name: "where and order by",
-			query: NewQuery("SELECT * FROM users").
+			query: newQuery("SELECT * FROM users", DialectPostgres).
 				Where(Eq("status", "active")).
 				OrderBy("created_at DESC"),
 			wantSQL:  "SELECT * FROM users WHERE status = $1 ORDER BY created_at DESC",
@@ -174,7 +174,7 @@ func TestQueryBuild(t *testing.T) {
 		// --- LIMIT ---
 		{
 			name:     "limit only",
-			query:    NewQuery("SELECT * FROM users").Limit(10),
+			query:    newQuery("SELECT * FROM users", DialectPostgres).Limit(10),
 			wantSQL:  "SELECT * FROM users LIMIT $1",
 			wantArgs: []any{10},
 		},
@@ -182,13 +182,13 @@ func TestQueryBuild(t *testing.T) {
 		// --- OFFSET ---
 		{
 			name:     "offset only",
-			query:    NewQuery("SELECT * FROM users").Offset(20),
+			query:    newQuery("SELECT * FROM users", DialectPostgres).Offset(20),
 			wantSQL:  "SELECT * FROM users OFFSET $1",
 			wantArgs: []any{20},
 		},
 		{
 			name:     "limit and offset",
-			query:    NewQuery("SELECT * FROM users").Limit(10).Offset(20),
+			query:    newQuery("SELECT * FROM users", DialectPostgres).Limit(10).Offset(20),
 			wantSQL:  "SELECT * FROM users LIMIT $1 OFFSET $2",
 			wantArgs: []any{10, 20},
 		},
@@ -196,7 +196,7 @@ func TestQueryBuild(t *testing.T) {
 		// --- full query ---
 		{
 			name: "full query all clauses",
-			query: NewQuery("SELECT status, COUNT(*) FROM users").
+			query: newQuery("SELECT status, COUNT(*) FROM users", DialectPostgres).
 				Where(IsNotNull("deleted_at")).
 				GroupBy("status").
 				Having(Gt("COUNT(*)", 5)).
@@ -210,7 +210,7 @@ func TestQueryBuild(t *testing.T) {
 		// --- placeholder numbering continuity ---
 		{
 			name: "placeholder counter is continuous across clauses",
-			query: NewQuery("SELECT * FROM users").
+			query: newQuery("SELECT * FROM users", DialectPostgres).
 				Where(Eq("status", "active")).
 				Having(Gt("COUNT(*)", 5)).
 				Limit(10).
@@ -222,8 +222,7 @@ func TestQueryBuild(t *testing.T) {
 		// --- dialects ---
 		{
 			name: "mysql dialect",
-			query: NewQuery("SELECT * FROM users").
-				Dialect(DialectMySQL).
+			query: newQuery("SELECT * FROM users", DialectMySQL).
 				Where(Eq("status", "active")).
 				Limit(10),
 			wantSQL:  "SELECT * FROM users WHERE status = ? LIMIT ?",
@@ -231,8 +230,7 @@ func TestQueryBuild(t *testing.T) {
 		},
 		{
 			name: "sqlserver dialect",
-			query: NewQuery("SELECT * FROM users").
-				Dialect(DialectSQLServer).
+			query: newQuery("SELECT * FROM users", DialectSQLServer).
 				Where(Eq("status", "active")).
 				Limit(10),
 			wantSQL:  "SELECT * FROM users WHERE status = @p1 LIMIT @p2",
@@ -240,8 +238,7 @@ func TestQueryBuild(t *testing.T) {
 		},
 		{
 			name: "oracle dialect",
-			query: NewQuery("SELECT * FROM users").
-				Dialect(DialectOracle).
+			query: newQuery("SELECT * FROM users", DialectOracle).
 				Where(Eq("status", "active")).
 				Limit(10),
 			wantSQL:  "SELECT * FROM users WHERE status = :1 LIMIT :2",

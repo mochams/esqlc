@@ -117,7 +117,7 @@ func TestRegistryLoad(t *testing.T) {
 				writeFile(t, dir, name, content)
 			}
 
-			reg := NewRegistry()
+			reg := NewRegistry(DialectPostgres)
 			var loadErr error
 			for _, f := range tt.loadFiles {
 				if err := reg.Load(filepath.Join(dir, f)); err != nil {
@@ -203,7 +203,7 @@ func TestRegistryLoadFS(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			reg := NewRegistry()
+			reg := NewRegistry(DialectPostgres)
 			var loadErr error
 			for _, p := range tt.loadPaths {
 				if err := reg.LoadFS(tt.fsys, p); err != nil {
@@ -294,7 +294,7 @@ func TestRegistryLoadDir(t *testing.T) {
 				}
 			}
 
-			reg := NewRegistry()
+			reg := NewRegistry(DialectPostgres)
 			err := reg.LoadDir(dir)
 
 			if tt.wantErr {
@@ -391,7 +391,7 @@ func TestRegistryWalkFS(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			reg := NewRegistry()
+			reg := NewRegistry(DialectPostgres)
 			err := reg.WalkFS(tt.fsys, tt.dir)
 
 			if tt.wantErr {
@@ -436,7 +436,7 @@ func TestRegistryGet(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			reg := NewRegistry()
+			reg := NewRegistry(DialectPostgres)
 			maps.Copy(reg.queries, tt.queries)
 
 			q, err := reg.Get(tt.get)
@@ -479,7 +479,7 @@ func TestRegistryMustGet(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			reg := NewRegistry()
+			reg := NewRegistry(DialectPostgres)
 			maps.Copy(reg.queries, tt.queries)
 
 			q := reg.MustGet(tt.get)
@@ -498,6 +498,17 @@ func TestRegistryMustGetPanics(t *testing.T) {
 		}
 	}()
 
-	reg := NewRegistry()
+	reg := NewRegistry(DialectPostgres)
 	reg.MustGet("nonexistent")
+}
+
+func TestRegistryQuery(t *testing.T) {
+	reg := NewRegistry(DialectPostgres)
+
+	q := reg.Query("SELECT * FROM users")
+	gotSQL, _ := q.Build()
+
+	if gotSQL != "SELECT * FROM users" {
+		t.Errorf("SQL: got %q, want %q", gotSQL, "SELECT * FROM users")
+	}
 }

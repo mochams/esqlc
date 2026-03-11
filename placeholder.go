@@ -30,6 +30,10 @@ const (
 // rewritePlaceholders rewrites '?' placeholders for the target dialect,
 // safely ignoring string literals and comments
 func rewritePlaceholders(sql string, dialect Dialect) string {
+	if !strings.Contains(sql, "?") {
+		return sql
+	}
+
 	if dialect == DialectMySQL || dialect == DialectSQLite {
 		return sql
 	}

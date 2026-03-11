@@ -10,33 +10,45 @@ import (
 )
 
 // Registry is a simple in-memory registry for storing named SQL queries.
+// It provides methods to load queries from files and directories
+// It provides as well as to retrieve queries by name.
 type Registry struct {
 	queries map[string]string
+	dialect Dialect
 }
 
 // NewRegistry creates a new Registry with an initialized queries map.
-func NewRegistry() *Registry {
-	return &Registry{queries: make(map[string]string)}
+func NewRegistry(dialect Dialect) *Registry {
+	return &Registry{
+		queries: make(map[string]string),
+		dialect: dialect,
+	}
 }
 
 // Get retrieves a Query by name from the registry.
 // It returns an error if the query is not found.
-func (r *Registry) Get(name string) (*Query, error) {
+func (r *Registry) Get(name string) (*query, error) {
 	sql, ok := r.queries[name]
 	if !ok {
 		return nil, fmt.Errorf("query %q not found", name)
 	}
-	return NewQuery(sql), nil
+	return newQuery(sql, r.dialect), nil
 }
 
 // MustGet retrieves a Query by name from the registry.
 // It panics if the query is not found.
-func (r *Registry) MustGet(name string) *Query {
+func (r *Registry) MustGet(name string) *query {
 	q, err := r.Get(name)
 	if err != nil {
 		panic(err)
 	}
 	return q
+}
+
+// Query creates a new Query from the given SQL string.
+// This method can be used to create ad-hoc queries that are not stored in the registry.
+func (r *Registry) Query(sql string) *query {
+	return newQuery(sql, r.dialect)
 }
 
 // Load reads SQL queries from a file at the given path and adds them to the registry.
