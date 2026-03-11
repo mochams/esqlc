@@ -63,6 +63,7 @@ This keeps your **core SQL declarative**, while allowing **flexible runtime filt
   * MySQL / SQLite `?`
   * SQL Server `@p1`
   * Oracle `:1`
+
 * Full clause support
 
   * `WHERE`
@@ -71,6 +72,7 @@ This keeps your **core SQL declarative**, while allowing **flexible runtime filt
   * `ORDER BY`
   * `LIMIT`
   * `OFFSET`
+
 * Works with `fs.FS` and `embed.FS`
 * Zero external dependencies
 
@@ -89,7 +91,9 @@ go get github.com/mochams/esqlc
 ### Ad-hoc queries
 
 ```go
-sql, args := esqlc.NewQuery("SELECT * FROM users").
+reg := esqlc.NewRegistry(esqlc.DialectPostgres)
+
+sql, args := reg.Query("SELECT * FROM users").
     Where(esqlc.And(
         esqlc.Eq("status", "active"),
         esqlc.Gt("age", 18),
@@ -104,14 +108,14 @@ Result:
 
 ```sql
 SELECT * FROM users
-WHERE (status = $1 AND age > $2)
+WHERE status = $1 AND age > $2
 ORDER BY created_at DESC
 LIMIT $3 OFFSET $4
 ```
 
 Args:
 
-```
+```txt
 ["active", 18, 20, 0]
 ```
 
@@ -138,15 +142,15 @@ AND deleted_at IS NULL
 Load and use them:
 
 ```go
-reg := esqlc.NewRegistry()
+reg := esqlc.NewRegistry(esqlc.DialectPostgres)
 
 if err := reg.Load("queries/users.sql"); err != nil {
     log.Fatal(err)
 }
 
-q := reg.MustGet("listUsers")
+query := reg.MustGet("listUsers")
 
-sql, args := q.
+sql, args := query.
     Where(esqlc.Eq("role", "admin")).
     OrderBy("created_at DESC").
     Limit(10).
@@ -163,12 +167,27 @@ Works with Go's `embed`.
 //go:embed queries
 var sqlFiles embed.FS
 
-reg := esqlc.NewRegistry()
+reg := esqlc.NewRegistry(esqlc.DialectPostgres)
 
 if err := reg.WalkFS(sqlFiles, "queries"); err != nil {
     log.Fatal(err)
 }
 ```
+
+---
+
+## Query Methods
+
+| Method             | Description                                                   |
+| ------------------ | ------------------------------------------------------------- |
+| `Where(pred)`      | Add a WHERE condition. Multiple calls are ANDed together      |
+| `Exclude(pred)`    | Add a negated WHERE condition — equivalent to `AND NOT (...)` |
+| `GroupBy(cols...)` | Add a GROUP BY clause                                         |
+| `Having(pred)`     | Add a HAVING condition                                        |
+| `OrderBy(cols...)` | Add an ORDER BY clause                                        |
+| `Limit(n)`         | Add a LIMIT clause                                            |
+| `Offset(n)`        | Add an OFFSET clause                                          |
+| `Build()`          | Finalize and return the SQL string and arguments              |
 
 ---
 
@@ -249,56 +268,40 @@ esqlc.And(
 
 ---
 
-## Query Builder
-
-```go
-sql, args := esqlc.NewQuery(
-    "SELECT status, COUNT(*) FROM users",
-).
-    Where(esqlc.IsNotNull("deleted_at")).
-    GroupBy("status").
-    Having(esqlc.Gt("COUNT(*)", 5)).
-    OrderBy("created_at DESC").
-    Limit(10).
-    Offset(20).
-    Build()
-```
-
----
-
 ## SQL Dialects
 
 esqlc rewrites placeholders automatically.
 
-### Postgres (default)
+### Postgres
 
-```
+```sql
 $1, $2, $3
 ```
 
 ### MySQL / SQLite
 
-```
+```sql
 ?, ?, ?
 ```
 
 ### SQL Server
 
-```
+```sql
 @p1, @p2
 ```
 
 ### Oracle
 
-```
+```sql
 :1, :2
 ```
 
 Example:
 
 ```go
-esqlc.NewQuery("SELECT * FROM users").
-    Dialect(esqlc.DialectSQLServer).
+reg := esqlc.NewRegistry(esqlc.DialectSQLServer)
+
+reg.Query("SELECT * FROM users").
     Where(esqlc.Eq("id", 1)).
     Build()
 ```
@@ -308,7 +311,7 @@ esqlc.NewQuery("SELECT * FROM users").
 ## Registry
 
 ```go
-reg := esqlc.NewRegistry()
+reg := esqlc.NewRegistry(esqlc.DialectPostgres)
 
 // load single file
 reg.Load("queries/users.sql")
@@ -329,6 +332,8 @@ Get queries:
 q, err := reg.Get("listUsers")
 
 q := reg.MustGet("listUsers")
+
+q := reg.Query("Select * FROM users")
 ```
 
 ---
