@@ -57,7 +57,7 @@ This keeps your **core SQL declarative**, while allowing **flexible runtime filt
 
 * Named SQL queries loaded from `.sql` files (yesql-style)
 * Composable predicates (`And`, `Or`, `Eq`, `In`, `Between`, etc.)
-* Multi-dialect placeholder rewriting
+* Multi-dialect support
 
   * Postgres `$1`
   * MySQL / SQLite `?`
@@ -206,22 +206,6 @@ esqlc.Lte("age", 18)
 
 esqlc.Gt("age", 65)
 esqlc.Gte("age", 65)
-
-esqlc.Like("name", "%john%")
-esqlc.ILike("name", "%john%") // Postgres only
-
-esqlc.IsNull("deleted_at")
-esqlc.IsNotNull("deleted_at")
-```
-
----
-
-### Range conditions
-
-```go
-esqlc.Between("age", 18, 65)
-
-esqlc.BetweenExclusive("age", 18, 65)
 ```
 
 ---
@@ -270,31 +254,14 @@ esqlc.And(
 
 ## SQL Dialects
 
-esqlc rewrites placeholders automatically.
+esqlc writes placeholders automatically.
 
-### Postgres
-
-```sql
-$1, $2, $3
-```
-
-### MySQL / SQLite
-
-```sql
-?, ?, ?
-```
-
-### SQL Server
-
-```sql
-@p1, @p2
-```
-
-### Oracle
-
-```sql
-:1, :2
-```
+| Database           | Placeholder Style | Example      |
+| ------------------ | ----------------- | ------------ |
+| **Postgres**       | `$n`              | `$1, $2, $3` |
+| **MySQL / SQLite** | `?`               | `?, ?, ?`    |
+| **SQL Server**     | `@pN`             | `@p1, @p2`   |
+| **Oracle**         | `:N`              | `:1, :2`     |
 
 Example:
 
@@ -356,7 +323,7 @@ DELETE FROM users WHERE id = ?
 Rules:
 
 * Use `?` placeholders regardless of dialect
-* esqlc rewrites placeholders during `Build()`
+* esqlc writes placeholders during `Build()`
 * Query names must be unique
 * Empty query bodies are rejected
 

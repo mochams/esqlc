@@ -8,21 +8,20 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        go: ["1.22", "1.23", "1.24", "1.25", "1.26"]
+        go: ["1.25", "1.26"]
     name: Go ${{ matrix.go }}
     steps:
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version: ${{ matrix.go }}
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - name: Run format
-        run: make fmt
-
-      - name: Run vet
-        run: make vet
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: latest
 
       - name: Run tests
         run: make test TEST_FLAGS="-v"

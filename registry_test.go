@@ -1,500 +1,42 @@
 package esqlc
 
 import (
-	"io/fs"
-	"maps"
 	"os"
-	"path/filepath"
+	"strings"
 	"testing"
-	"testing/fstest"
 )
 
-// --- helpers ---
+// Helpers
 
-func writeFile(t *testing.T, dir, name, content string) string {
-	t.Helper()
-	path := filepath.Join(dir, name)
-	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-		t.Fatalf("writeFile: %v", err)
-	}
-	return path
-}
-
-func tempDir(t *testing.T) string {
-	t.Helper()
-	dir, err := os.MkdirTemp("", "esqlc-test-*")
-	if err != nil {
-		t.Fatalf("tempDir: %v", err)
-	}
-	t.Cleanup(func() { os.RemoveAll(dir) })
-	return dir
-}
-
-func assertQueries(t *testing.T, reg *Registry, want map[string]string) {
+func assertErrorContains(t *testing.T, err error, wantSubstring string) {
 	t.Helper()
 
-	if len(reg.queries) != len(want) {
-		t.Fatalf("query count: got %d, want %d", len(reg.queries), len(want))
+	if err == nil {
+		t.Errorf("expected error containing %q, got nil", wantSubstring)
+
+		return
 	}
 
-	for name, wantSQL := range want {
-		q, err := reg.Get(name)
-		if err != nil {
-			t.Errorf("query %q not found: %v", name, err)
-			continue
-		}
-		gotSQL, _ := q.RawBuild()
-		if gotSQL != wantSQL {
-			t.Errorf("query %q: got %q, want %q", name, gotSQL, wantSQL)
-		}
+	if !strings.EqualFold(err.Error(), wantSubstring) {
+		t.Errorf("unexpected error message: got %q, want substring %q", err.Error(), wantSubstring)
 	}
 }
 
-// --- Load ---
+// Tests
 
-func TestRegistryLoad(t *testing.T) {
-	tests := []struct {
-		name        string
-		files       map[string]string // filename -> content
-		loadFiles   []string          // order to load
-		wantQueries map[string]string
-		wantErr     bool
-	}{
-		{
-			name: "single file single query",
-			files: map[string]string{
-				"users.sql": "-- name: listUsers\nSELECT * FROM users",
-			},
-			loadFiles: []string{"users.sql"},
-			wantQueries: map[string]string{
-				"listUsers": "SELECT * FROM users",
-			},
-		},
-		{
-			name: "single file multiple queries",
-			files: map[string]string{
-				"users.sql": "-- name: listUsers\nSELECT * FROM users\n\n-- name: getUserByID\nSELECT * FROM users WHERE id = ?",
-			},
-			loadFiles: []string{"users.sql"},
-			wantQueries: map[string]string{
-				"listUsers":   "SELECT * FROM users",
-				"getUserByID": "SELECT * FROM users WHERE id = ?",
-			},
-		},
-		{
-			name: "multiple files",
-			files: map[string]string{
-				"users.sql":  "-- name: listUsers\nSELECT * FROM users",
-				"orders.sql": "-- name: listOrders\nSELECT * FROM orders",
-			},
-			loadFiles: []string{"users.sql", "orders.sql"},
-			wantQueries: map[string]string{
-				"listUsers":  "SELECT * FROM users",
-				"listOrders": "SELECT * FROM orders",
-			},
-		},
-		{
-			name: "duplicate query name across files",
-			files: map[string]string{
-				"users.sql":  "-- name: listUsers\nSELECT * FROM users",
-				"admins.sql": "-- name: listUsers\nSELECT * FROM admins",
-			},
-			loadFiles: []string{"users.sql", "admins.sql"},
-			wantErr:   true,
-		},
-		{
-			name:      "file not found",
-			files:     map[string]string{},
-			loadFiles: []string{"nonexistent.sql"},
-			wantErr:   true,
-		},
-	}
+func TestRegistry_GetUnknownQuery(t *testing.T) {
+	reg := NewRegistry(DialectPostgres)
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			dir := tempDir(t)
-			for name, content := range tt.files {
-				writeFile(t, dir, name, content)
-			}
-
-			reg := NewRegistry(DialectPostgres)
-			var loadErr error
-			for _, f := range tt.loadFiles {
-				if err := reg.Load(filepath.Join(dir, f)); err != nil {
-					loadErr = err
-					break
-				}
-			}
-
-			if tt.wantErr {
-				if loadErr == nil {
-					t.Error("expected error, got nil")
-				}
-				return
-			}
-
-			if loadErr != nil {
-				t.Fatalf("unexpected error: %v", loadErr)
-			}
-
-			assertQueries(t, reg, tt.wantQueries)
-		})
+	_, err := reg.Get("nonexistent")
+	if err == nil {
+		t.Error("expected error for unknown query, got nil")
 	}
 }
 
-// --- LoadFS ---
-
-func TestRegistryLoadFS(t *testing.T) {
-	tests := []struct {
-		name        string
-		fsys        fs.FS
-		loadPaths   []string
-		wantQueries map[string]string
-		wantErr     bool
-	}{
-		{
-			name: "single file single query",
-			fsys: fstest.MapFS{
-				"users.sql": &fstest.MapFile{
-					Data: []byte("-- name: listUsers\nSELECT * FROM users"),
-				},
-			},
-			loadPaths: []string{"users.sql"},
-			wantQueries: map[string]string{
-				"listUsers": "SELECT * FROM users",
-			},
-		},
-		{
-			name: "multiple files",
-			fsys: fstest.MapFS{
-				"users.sql": &fstest.MapFile{
-					Data: []byte("-- name: listUsers\nSELECT * FROM users"),
-				},
-				"orders.sql": &fstest.MapFile{
-					Data: []byte("-- name: listOrders\nSELECT * FROM orders"),
-				},
-			},
-			loadPaths: []string{"users.sql", "orders.sql"},
-			wantQueries: map[string]string{
-				"listUsers":  "SELECT * FROM users",
-				"listOrders": "SELECT * FROM orders",
-			},
-		},
-		{
-			name: "duplicate query name across files",
-			fsys: fstest.MapFS{
-				"users.sql": &fstest.MapFile{
-					Data: []byte("-- name: listUsers\nSELECT * FROM users"),
-				},
-				"admins.sql": &fstest.MapFile{
-					Data: []byte("-- name: listUsers\nSELECT * FROM admins"),
-				},
-			},
-			loadPaths: []string{"users.sql", "admins.sql"},
-			wantErr:   true,
-		},
-		{
-			name:      "file not found",
-			fsys:      fstest.MapFS{},
-			loadPaths: []string{"nonexistent.sql"},
-			wantErr:   true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			reg := NewRegistry(DialectPostgres)
-			var loadErr error
-			for _, p := range tt.loadPaths {
-				if err := reg.LoadFS(tt.fsys, p); err != nil {
-					loadErr = err
-					break
-				}
-			}
-
-			if tt.wantErr {
-				if loadErr == nil {
-					t.Error("expected error, got nil")
-				}
-				return
-			}
-
-			if loadErr != nil {
-				t.Fatalf("unexpected error: %v", loadErr)
-			}
-
-			assertQueries(t, reg, tt.wantQueries)
-		})
-	}
-}
-
-// --- LoadDir ---
-
-func TestRegistryLoadDir(t *testing.T) {
-	tests := []struct {
-		name        string
-		files       map[string]string
-		wantQueries map[string]string
-		wantErr     bool
-	}{
-		{
-			name: "single sql file",
-			files: map[string]string{
-				"users.sql": "-- name: listUsers\nSELECT * FROM users",
-			},
-			wantQueries: map[string]string{
-				"listUsers": "SELECT * FROM users",
-			},
-		},
-		{
-			name: "multiple sql files",
-			files: map[string]string{
-				"users.sql":  "-- name: listUsers\nSELECT * FROM users",
-				"orders.sql": "-- name: listOrders\nSELECT * FROM orders",
-			},
-			wantQueries: map[string]string{
-				"listUsers":  "SELECT * FROM users",
-				"listOrders": "SELECT * FROM orders",
-			},
-		},
-		{
-			name: "non sql files are ignored",
-			files: map[string]string{
-				"users.sql": "-- name: listUsers\nSELECT * FROM users",
-				"README.md": "some readme",
-				"notes.txt": "some notes",
-			},
-			wantQueries: map[string]string{
-				"listUsers": "SELECT * FROM users",
-			},
-		},
-		{
-			name: "duplicate query name across files",
-			files: map[string]string{
-				"users.sql":  "-- name: listUsers\nSELECT * FROM users",
-				"admins.sql": "-- name: listUsers\nSELECT * FROM admins",
-			},
-			wantErr: true,
-		},
-		{
-			name:    "dir not found",
-			wantErr: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			var dir string
-			if tt.name == "dir not found" {
-				dir = "/nonexistent/path"
-			} else {
-				dir = tempDir(t)
-				for name, content := range tt.files {
-					writeFile(t, dir, name, content)
-				}
-			}
-
-			reg := NewRegistry(DialectPostgres)
-			err := reg.LoadDir(dir)
-
-			if tt.wantErr {
-				if err == nil {
-					t.Error("expected error, got nil")
-				}
-				return
-			}
-
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-
-			assertQueries(t, reg, tt.wantQueries)
-		})
-	}
-}
-
-// --- WalkFS ---
-
-func TestRegistryWalkFS(t *testing.T) {
-	tests := []struct {
-		name        string
-		fsys        fs.FS
-		dir         string
-		wantQueries map[string]string
-		wantErr     bool
-	}{
-		{
-			name: "single sql file",
-			fsys: fstest.MapFS{
-				"queries/users.sql": &fstest.MapFile{
-					Data: []byte("-- name: listUsers\nSELECT * FROM users"),
-				},
-			},
-			dir: "queries",
-			wantQueries: map[string]string{
-				"listUsers": "SELECT * FROM users",
-			},
-		},
-		{
-			name: "multiple sql files",
-			fsys: fstest.MapFS{
-				"queries/users.sql": &fstest.MapFile{
-					Data: []byte("-- name: listUsers\nSELECT * FROM users"),
-				},
-				"queries/orders.sql": &fstest.MapFile{
-					Data: []byte("-- name: listOrders\nSELECT * FROM orders"),
-				},
-			},
-			dir: "queries",
-			wantQueries: map[string]string{
-				"listUsers":  "SELECT * FROM users",
-				"listOrders": "SELECT * FROM orders",
-			},
-		},
-		{
-			name: "non sql files are ignored",
-			fsys: fstest.MapFS{
-				"queries/users.sql": &fstest.MapFile{
-					Data: []byte("-- name: listUsers\nSELECT * FROM users"),
-				},
-				"queries/README.md": &fstest.MapFile{
-					Data: []byte("some readme"),
-				},
-			},
-			dir: "queries",
-			wantQueries: map[string]string{
-				"listUsers": "SELECT * FROM users",
-			},
-		},
-		{
-			name: "subdirectories are ignored",
-			fsys: fstest.MapFS{
-				"queries/users.sql": &fstest.MapFile{
-					Data: []byte("-- name: listUsers\nSELECT * FROM users"),
-				},
-				"queries/sub/orders.sql": &fstest.MapFile{
-					Data: []byte("-- name: listOrders\nSELECT * FROM orders"),
-				},
-			},
-			dir: "queries",
-			wantQueries: map[string]string{
-				"listUsers": "SELECT * FROM users",
-			},
-		},
-		{
-			name:    "dir not found",
-			fsys:    fstest.MapFS{},
-			dir:     "nonexistent",
-			wantErr: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			reg := NewRegistry(DialectPostgres)
-			err := reg.WalkFS(tt.fsys, tt.dir)
-
-			if tt.wantErr {
-				if err == nil {
-					t.Error("expected error, got nil")
-				}
-				return
-			}
-
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-
-			assertQueries(t, reg, tt.wantQueries)
-		})
-	}
-}
-
-// --- Get ---
-
-func TestRegistryGet(t *testing.T) {
-	tests := []struct {
-		name    string
-		queries map[string]string
-		get     string
-		wantSQL string
-		wantErr bool
-	}{
-		{
-			name:    "existing query",
-			queries: map[string]string{"listUsers": "SELECT * FROM users"},
-			get:     "listUsers",
-			wantSQL: "SELECT * FROM users",
-		},
-		{
-			name:    "query not found",
-			queries: map[string]string{},
-			get:     "listUsers",
-			wantErr: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			reg := NewRegistry(DialectPostgres)
-			maps.Copy(reg.queries, tt.queries)
-
-			q, err := reg.Get(tt.get)
-
-			if tt.wantErr {
-				if err == nil {
-					t.Error("expected error, got nil")
-				}
-				return
-			}
-
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-
-			gotSQL, _ := q.Build()
-			if gotSQL != tt.wantSQL {
-				t.Errorf("SQL: got %q, want %q", gotSQL, tt.wantSQL)
-			}
-		})
-	}
-}
-
-// --- MustGet ---
-
-func TestRegistryMustGet(t *testing.T) {
-	tests := []struct {
-		name    string
-		queries map[string]string
-		get     string
-		wantSQL string
-	}{
-		{
-			name:    "existing query",
-			queries: map[string]string{"listUsers": "SELECT * FROM users"},
-			get:     "listUsers",
-			wantSQL: "SELECT * FROM users",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			reg := NewRegistry(DialectPostgres)
-			maps.Copy(reg.queries, tt.queries)
-
-			q := reg.MustGet(tt.get)
-			gotSQL, _ := q.Build()
-			if gotSQL != tt.wantSQL {
-				t.Errorf("SQL: got %q, want %q", gotSQL, tt.wantSQL)
-			}
-		})
-	}
-}
-
-func TestRegistryMustGetPanics(t *testing.T) {
+func TestRegistry_MustGetPanicsOnUnknown(t *testing.T) {
 	defer func() {
 		if r := recover(); r == nil {
-			t.Error("expected panic, got none")
+			t.Error("expected panic for unknown query, got none")
 		}
 	}()
 
@@ -502,13 +44,315 @@ func TestRegistryMustGetPanics(t *testing.T) {
 	reg.MustGet("nonexistent")
 }
 
-func TestRegistryQuery(t *testing.T) {
+func TestRegistry_AdHocQuery(t *testing.T) {
+	reg := NewRegistry(DialectPostgres)
+	sql, args := reg.Query("SELECT * FROM users").
+		Where(Eq("status", "active")).
+		Build()
+
+	assertSQL(t, sql, "SELECT * FROM users WHERE status = $1")
+	assertArgs(t, args, []any{"active"})
+}
+
+func TestRegistry_LoadFile(t *testing.T) {
+	reg := NewRegistry(DialectPostgres)
+	if err := reg.Load("testdata/queries/users.sql"); err != nil {
+		t.Fatalf("failed to load queries: %v", err)
+	}
+
+	gotSQL, err := reg.Get("insertUser")
+	if err != nil {
+		t.Fatalf("failed to get query: %v", err)
+	}
+
+	sql, _ := gotSQL.Build()
+	wantSQL := "INSERT INTO users (name, email) VALUES ($1, $2)"
+	assertSQL(t, sql, wantSQL)
+}
+
+func TestRegistry_LoadDuplicateFile(t *testing.T) {
 	reg := NewRegistry(DialectPostgres)
 
-	q := reg.Query("SELECT * FROM users")
-	gotSQL, _ := q.Build()
-
-	if gotSQL != "SELECT * FROM users" {
-		t.Errorf("SQL: got %q, want %q", gotSQL, "SELECT * FROM users")
+	err := reg.Load("testdata/invalid_queries/duplicate_names.sql")
+	if err == nil {
+		t.Fatal("expected error for duplicate query names, got nil")
 	}
+
+	errMsg := "esqlc: parse testdata/invalid_queries/duplicate_names.sql: duplicate query name \"listUsers\""
+	assertErrorContains(t, err, errMsg)
+}
+
+func TestRegistry_LoadNonexistentFile(t *testing.T) {
+	reg := NewRegistry(DialectPostgres)
+
+	err := reg.Load("testdata/queries/nonexistent.sql")
+	if err == nil {
+		t.Fatal("expected error for nonexistent file, got nil")
+	}
+
+	errMsg := "esqlc: open testdata/queries/nonexistent.sql: open testdata/queries/nonexistent.sql: no such file or directory"
+	assertErrorContains(t, err, errMsg)
+}
+
+func TestRegistry_LoadInvalidNaming(t *testing.T) {
+	reg := NewRegistry(DialectPostgres)
+
+	err := reg.Load("testdata/invalid_queries/wrong_names.sql")
+	if err != nil {
+		t.Fatal("unexpected error loading file:", err)
+	}
+
+	if len(reg.Queries()) != 0 {
+		t.Errorf("expected no queries loaded, got %d", len(reg.Queries()))
+	}
+}
+
+func TestRegistry_LoadEmptyFile(t *testing.T) {
+	reg := NewRegistry(DialectPostgres)
+
+	err := reg.Load("testdata/queries/empty.sql")
+	if err != nil {
+		t.Fatal("unexpected error loading file:", err)
+	}
+
+	if len(reg.Queries()) != 0 {
+		t.Errorf("expected no queries loaded, got %d", len(reg.Queries()))
+	}
+}
+
+func TestRegistry_LoadDir(t *testing.T) {
+	reg := NewRegistry(DialectPostgres)
+
+	err := reg.LoadDir("testdata/queries")
+	if err != nil {
+		t.Fatalf("failed to load queries: %v", err)
+	}
+
+	expectedQueries := []string{
+		"createOrdersTable",
+		"createProductsTable",
+		"createUsersTable",
+		"dropOrdersTable",
+		"dropProductsTable",
+		"dropUsersTable",
+		"insertUser",
+		"listUsers",
+	}
+	gotQueries := reg.Queries()
+
+	if len(gotQueries) != len(expectedQueries) {
+		t.Fatalf("expected %d queries, got %d", len(expectedQueries), len(gotQueries))
+	}
+
+	for i, want := range expectedQueries {
+		if gotQueries[i] != want {
+			t.Errorf("query[%d]: got %q, want %q", i, gotQueries[i], want)
+		}
+	}
+}
+
+func TestRegistry_LoadNonExistentFolder(t *testing.T) {
+	reg := NewRegistry(DialectPostgres)
+
+	err := reg.LoadDir("testdata/nonexistent")
+	if err == nil {
+		t.Fatal("expected error for nonexistent directory, got nil")
+	}
+
+	errMsg := "esqlc: read dir testdata/nonexistent: open testdata/nonexistent: no such file or directory"
+	assertErrorContains(t, err, errMsg)
+}
+
+func TestRegistry_LoadEmptyDir(t *testing.T) {
+	reg := NewRegistry(DialectPostgres)
+
+	err := reg.LoadDir("testdata/empty_queries")
+	if err != nil {
+		t.Fatal("unexpected error loading empty directory:", err)
+	}
+
+	if len(reg.Queries()) != 0 {
+		t.Errorf("expected no queries loaded, got %d", len(reg.Queries()))
+	}
+}
+
+func TestRegistry_LoadInvalidQueries(t *testing.T) {
+	reg := NewRegistry(DialectPostgres)
+
+	err := reg.LoadDir("testdata/invalid_queries")
+	if err == nil {
+		t.Fatal("expected error for nonexistent directory, got nil")
+	}
+
+	errMsg := "esqlc: parse testdata/invalid_queries/duplicate_names.sql: duplicate query name \"listUsers\""
+	assertErrorContains(t, err, errMsg)
+}
+
+func TestRegistry_LoadFS(t *testing.T) {
+	reg := NewRegistry(DialectPostgres)
+
+	err := reg.LoadFS(os.DirFS("testdata/queries"), "users.sql")
+	if err != nil {
+		t.Fatalf("failed to load queries from FS: %v", err)
+	}
+
+	gotSQL, err := reg.Get("insertUser")
+	if err != nil {
+		t.Fatalf("failed to get query: %v", err)
+	}
+
+	sql, _ := gotSQL.Build()
+	wantSQL := "INSERT INTO users (name, email) VALUES ($1, $2)"
+	assertSQL(t, sql, wantSQL)
+}
+
+func TestRegistry_LoadFSNonexistentFile(t *testing.T) {
+	reg := NewRegistry(DialectPostgres)
+
+	err := reg.LoadFS(os.DirFS("testdata/queries"), "nonexistent.sql")
+	if err == nil {
+		t.Fatal("expected error for nonexistent file in FS, got nil")
+	}
+
+	errMsg := "esqlc: open nonexistent.sql: open nonexistent.sql: no such file or directory"
+	assertErrorContains(t, err, errMsg)
+}
+
+func TestRegistry_LoadFSDuplicate(t *testing.T) {
+	reg := NewRegistry(DialectPostgres)
+
+	err := reg.LoadFS(os.DirFS("testdata/invalid_queries"), "duplicate_names.sql")
+	if err == nil {
+		t.Fatal("expected error for duplicate query names in FS, got nil")
+	}
+
+	errMsg := "esqlc: parse duplicate_names.sql: duplicate query name \"listUsers\""
+	assertErrorContains(t, err, errMsg)
+}
+
+func TestRegistry_WalkFS(t *testing.T) {
+	reg := NewRegistry(DialectPostgres)
+
+	err := reg.WalkFS(os.DirFS("testdata/queries"), ".")
+	if err != nil {
+		t.Fatalf("failed to walk FS: %v", err)
+	}
+
+	expectedQueries := []string{
+		"createOrdersTable",
+		"createProductsTable",
+		"createUsersTable",
+		"dropOrdersTable",
+		"dropProductsTable",
+		"dropUsersTable",
+		"insertUser",
+		"listUsers",
+	}
+	gotQueries := reg.Queries()
+
+	if len(gotQueries) != len(expectedQueries) {
+		t.Fatalf("expected %d queries, got %d", len(expectedQueries), len(gotQueries))
+	}
+
+	for i, want := range expectedQueries {
+		if gotQueries[i] != want {
+			t.Errorf("query[%d]: got %q, want %q", i, gotQueries[i], want)
+		}
+	}
+}
+
+func TestRegistry_WalkFSNonexistentDir(t *testing.T) {
+	reg := NewRegistry(DialectPostgres)
+
+	err := reg.WalkFS(os.DirFS("testdata/queries"), "nonexistent")
+	if err == nil {
+		t.Fatal("expected error for nonexistent directory in FS, got nil")
+	}
+
+	errMsg := "esqlc: read dir nonexistent: open nonexistent: no such file or directory"
+	assertErrorContains(t, err, errMsg)
+}
+
+func TestRegistry_WalkFSInvalidQueries(t *testing.T) {
+	reg := NewRegistry(DialectPostgres)
+
+	err := reg.WalkFS(os.DirFS("testdata/invalid_queries"), ".")
+	if err == nil {
+		t.Fatal("expected error for invalid queries in FS, got nil")
+	}
+
+	errMsg := "esqlc: parse duplicate_names.sql: duplicate query name \"listUsers\""
+	assertErrorContains(t, err, errMsg)
+}
+
+func TestRegistry_WalkFSEmptyDir(t *testing.T) {
+	reg := NewRegistry(DialectPostgres)
+
+	err := reg.WalkFS(os.DirFS("testdata/empty_queries"), ".")
+	if err != nil {
+		t.Fatal("unexpected error walking empty directory in FS:", err)
+	}
+
+	if len(reg.Queries()) != 0 {
+		t.Errorf("expected no queries loaded, got %d", len(reg.Queries()))
+	}
+}
+
+func TestRegistry_Has(t *testing.T) {
+	reg := NewRegistry(DialectPostgres)
+
+	err := reg.Load("testdata/queries/users.sql")
+	if err != nil {
+		t.Fatalf("failed to load queries: %v", err)
+	}
+
+	if !reg.Has("insertUser") {
+		t.Error("expected Has to return true for existing query, got false")
+	}
+
+	if reg.Has("nonexistent") {
+		t.Error("expected Has to return false for unknown query, got true")
+	}
+}
+
+func TestRegistry_Queries(t *testing.T) {
+	reg := NewRegistry(DialectPostgres)
+
+	err := reg.Load("testdata/queries/users.sql")
+	if err != nil {
+		t.Fatalf("failed to load queries: %v", err)
+	}
+
+	gotQueries := reg.Queries()
+	expectedQueries := []string{"createUsersTable", "dropUsersTable", "insertUser", "listUsers"}
+
+	if len(gotQueries) != len(expectedQueries) {
+		t.Fatalf("expected %d queries, got %d", len(expectedQueries), len(gotQueries))
+	}
+
+	for i, want := range expectedQueries {
+		if gotQueries[i] != want {
+			t.Errorf("query[%d]: got %q, want %q", i, gotQueries[i], want)
+		}
+	}
+}
+
+func TestRegistry_DynamicFiltering(t *testing.T) {
+	reg := NewRegistry(DialectPostgres)
+
+	err := reg.LoadDir("testdata/queries")
+	if err != nil {
+		t.Fatalf("failed to load queries: %v", err)
+	}
+
+	sql, args := reg.MustGet("listUsers").
+		Where(Eq("status", "active")).
+		Where(Gt("created_at", "2023-01-01")).
+		OrderBy("created_at DESC").
+		Limit(10).
+		Build()
+
+	wantSQL := "SELECT id, name, email, created_at FROM users WHERE status = $1 AND created_at > $2 ORDER BY created_at DESC LIMIT $3"
+	assertSQL(t, sql, wantSQL)
+	assertArgs(t, args, []any{"active", "2023-01-01", 10})
 }
