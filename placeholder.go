@@ -14,122 +14,135 @@ const (
 	DialectPostgres  Dialect = iota // $1, $2
 	DialectMySQL                    // ?, ?
 	DialectSQLite                   // ?, ?  (same as MySQL)
-	DialectSQLServer                // @p1, @p2
+	DialectSQLServer                // @p1,	@p2
 	DialectOracle                   // :1, :2
 )
 
-// State constants for the placeholder rewriting state machine.
-const (
-	stateNormal uint8 = iota
-	stateSingle
-	stateDouble
-	stateLineComment
-	stateBlockComment
-)
-
-// rewritePlaceholders rewrites '?' placeholders for the target dialect,
-// safely ignoring string literals and comments
-func rewritePlaceholders(sql string, dialect Dialect) string {
-	if !strings.Contains(sql, "?") {
-		return sql
-	}
-
-	if dialect == DialectMySQL || dialect == DialectSQLite {
+// writePlaceholders rewrites '?' placeholders in the SQL string to the appropriate format for the given dialect,
+func writePlaceholders(sql string, dialect Dialect) string {
+	if !strings.Contains(sql, "?") || dialect == DialectMySQL || dialect == DialectSQLite {
 		return sql
 	}
 
 	var buf strings.Builder
 	buf.Grow(len(sql))
+	processPlaceholders(&buf, sql, dialect)
+	return buf.String()
+}
 
-	var tmp [20]byte
-	state := stateNormal
+// processPlaceholders scans the SQL string and appends characters to the buffer, rewriting '?'
+// placeholders according to the dialect.
+// It correctly handles string literals and comments to avoid writing placeholders inside them.
+func processPlaceholders(buf *strings.Builder, sql string, dialect Dialect) {
 	n := 1
 	i := 0
-
 	for i < len(sql) {
-		c := sql[i]
-
-		switch state {
-		case stateNormal:
-			switch c {
-			case '\'':
-				state = stateSingle
-				buf.WriteByte(c)
-			case '"':
-				state = stateDouble
-				buf.WriteByte(c)
-			case '-':
-				if i+1 < len(sql) && sql[i+1] == '-' {
-					buf.WriteString("--")
-					i++
-					state = stateLineComment
-				} else {
-					buf.WriteByte(c)
-				}
-
-			case '/':
-				if i+1 < len(sql) && sql[i+1] == '*' {
-					buf.WriteString("/*")
-					i++
-					state = stateBlockComment
-				} else {
-					buf.WriteByte(c)
-				}
-
-			case '?':
-				switch dialect {
-				case DialectPostgres:
-					buf.WriteByte('$')
-					buf.Write(strconv.AppendInt(tmp[:0], int64(n), 10))
-				case DialectSQLServer:
-					buf.WriteString("@p")
-					buf.Write(strconv.AppendInt(tmp[:0], int64(n), 10))
-				case DialectOracle:
-					buf.WriteByte(':')
-					buf.Write(strconv.AppendInt(tmp[:0], int64(n), 10))
-				default:
-					buf.WriteByte('?')
-				}
-				n++
-
-			default:
-				buf.WriteByte(c)
-			}
-
-		case stateSingle:
-			buf.WriteByte(c)
-			if c == '\'' {
-				if i+1 < len(sql) && sql[i+1] == '\'' {
-					buf.WriteByte('\'')
-					i++
-				} else {
-					state = stateNormal
-				}
-			}
-
-		case stateDouble:
-			buf.WriteByte(c)
-			if c == '"' {
-				state = stateNormal
-			}
-
-		case stateLineComment:
-			buf.WriteByte(c)
-			if c == '\n' {
-				state = stateNormal
-			}
-
-		case stateBlockComment:
-			buf.WriteByte(c)
-			if c == '*' && i+1 < len(sql) && sql[i+1] == '/' {
-				buf.WriteByte('/')
-				i++
-				state = stateNormal
-			}
+		switch {
+		case isLineComment(sql, i):
+			i = consumeLineComment(buf, sql, i)
+		case isBlockComment(sql, i):
+			i = consumeBlockComment(buf, sql, i)
+		case sql[i] == '\'':
+			i = consumeSingleQuote(buf, sql, i)
+		case sql[i] == '"':
+			i = consumeDoubleQuote(buf, sql, i)
+		case sql[i] == '?':
+			writePlaceholder(buf, dialect, n)
+			n++
+			i++
+		default:
+			buf.WriteByte(sql[i])
+			i++
 		}
+	}
+}
 
+// isLineComment checks if the current position in the SQL string starts a line comment (e.g., "--").
+func isLineComment(sql string, i int) bool {
+	return i+1 < len(sql) && sql[i] == '-' && sql[i+1] == '-'
+}
+
+// isBlockComment checks if the current position in the SQL string starts a block comment (e.g., "/*").
+func isBlockComment(sql string, i int) bool {
+	return i+1 < len(sql) && sql[i] == '/' && sql[i+1] == '*'
+}
+
+// consumeLineComment appends chars from a line comment to the buffer until the end of the line.
+func consumeLineComment(buf *strings.Builder, sql string, i int) int {
+	for i < len(sql) {
+		buf.WriteByte(sql[i])
+		if sql[i] == '\n' {
+			i++
+			break
+		}
 		i++
 	}
+	return i
+}
 
-	return buf.String()
+// consumeBlockComment appends chars from a block comment to the buffer until the closing "*/" is found.
+func consumeBlockComment(buf *strings.Builder, sql string, i int) int {
+	for i < len(sql) {
+		buf.WriteByte(sql[i])
+		if sql[i] == '*' && i+1 < len(sql) && sql[i+1] == '/' {
+			buf.WriteByte('/')
+			i += 2
+			break
+		}
+		i++
+	}
+	return i
+}
+
+// consumeSingleQuote appends chars from a single-quoted string literal to the buffer, handling escaped single quotes.
+func consumeSingleQuote(buf *strings.Builder, sql string, i int) int {
+	buf.WriteByte('\'')
+	i++
+	for i < len(sql) {
+		buf.WriteByte(sql[i])
+		if sql[i] == '\'' {
+			i++
+			if i < len(sql) && sql[i] == '\'' {
+				buf.WriteByte('\'')
+				i++
+				continue
+			}
+			break
+		}
+		i++
+	}
+	return i
+}
+
+// consumeDoubleQuote appends chars from a double-quoted string literal to the buffer, handling escaped double quotes.
+func consumeDoubleQuote(buf *strings.Builder, sql string, i int) int {
+	buf.WriteByte('"')
+	i++
+	for i < len(sql) {
+		buf.WriteByte(sql[i])
+		if sql[i] == '"' {
+			i++
+			break
+		}
+		i++
+	}
+	return i
+}
+
+// writePlaceholder appends the appropriate placeholder for the given dialect and parameter index to the buffer.
+func writePlaceholder(buf *strings.Builder, dialect Dialect, n int) {
+	var tmp [20]byte
+	switch dialect {
+	case DialectPostgres:
+		buf.WriteByte('$')
+		buf.Write(strconv.AppendInt(tmp[:0], int64(n), 10))
+	case DialectSQLServer:
+		buf.WriteString("@p")
+		buf.Write(strconv.AppendInt(tmp[:0], int64(n), 10))
+	case DialectOracle:
+		buf.WriteByte(':')
+		buf.Write(strconv.AppendInt(tmp[:0], int64(n), 10))
+	default:
+		buf.WriteByte('?')
+	}
 }

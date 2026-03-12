@@ -4,7 +4,7 @@ import (
 	"testing"
 )
 
-func TestRewritePlaceholders(t *testing.T) {
+func TestWritePlaceholders(t *testing.T) {
 	tests := []struct {
 		name    string
 		sql     string
@@ -278,7 +278,7 @@ func TestRewritePlaceholders(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := rewritePlaceholders(tt.sql, tt.dialect)
+			got := writePlaceholders(tt.sql, tt.dialect)
 			if got != tt.want {
 				t.Errorf("\ngot  %q\nwant %q", got, tt.want)
 			}

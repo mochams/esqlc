@@ -6,6 +6,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -27,38 +28,45 @@ func NewRegistry(dialect Dialect) *Registry {
 
 // Get retrieves a Query by name from the registry.
 // It returns an error if the query is not found.
-func (r *Registry) Get(name string) (*query, error) {
+func (r *Registry) Get(name string) (*Query, error) {
 	sql, ok := r.queries[name]
 	if !ok {
 		return nil, fmt.Errorf("query %q not found", name)
 	}
+
 	return newQuery(sql, r.dialect), nil
 }
 
 // MustGet retrieves a Query by name from the registry.
 // It panics if the query is not found.
-func (r *Registry) MustGet(name string) *query {
+func (r *Registry) MustGet(name string) *Query {
 	q, err := r.Get(name)
 	if err != nil {
 		panic(err)
 	}
+
 	return q
 }
 
 // Query creates a new Query from the given SQL string.
 // This method can be used to create ad-hoc queries that are not stored in the registry.
-func (r *Registry) Query(sql string) *query {
+func (r *Registry) Query(sql string) *Query {
 	return newQuery(sql, r.dialect)
 }
 
 // Load reads SQL queries from a file at the given path and adds them to the registry.
 // It returns an error if the file cannot be read or if there are duplicate query names.
 func (r *Registry) Load(path string) error {
+	// #nosec G304 -- path is provided by the developer at startup, not from user input
 	f, err := os.Open(path)
 	if err != nil {
 		return fmt.Errorf("esqlc: open %s: %w", path, err)
 	}
-	defer f.Close()
+	defer func() {
+		if cerr := f.Close(); cerr != nil && err == nil {
+			err = cerr
+		}
+	}()
 
 	queries, err := parse(f)
 	if err != nil {
@@ -75,7 +83,11 @@ func (r *Registry) LoadFS(fsys fs.FS, path string) error {
 	if err != nil {
 		return fmt.Errorf("esqlc: open %s: %w", path, err)
 	}
-	defer f.Close()
+	defer func() {
+		if cerr := f.Close(); cerr != nil && err == nil {
+			err = cerr
+		}
+	}()
 
 	queries, err := parse(f)
 	if err != nil {
@@ -92,8 +104,10 @@ func (r *Registry) merge(path string, queries map[string]string) error {
 		if _, exists := r.queries[name]; exists {
 			return fmt.Errorf("esqlc: duplicate query name %q in %s", name, path)
 		}
+
 		r.queries[name] = sql
 	}
+
 	return nil
 }
 
@@ -109,7 +123,9 @@ func (r *Registry) LoadDir(dir string) error {
 		if entry.IsDir() || !strings.HasSuffix(strings.ToLower(entry.Name()), ".sql") {
 			continue
 		}
-		if err := r.Load(filepath.Join(dir, entry.Name())); err != nil {
+
+		err := r.Load(filepath.Join(dir, entry.Name()))
+		if err != nil {
 			return err
 		}
 	}
@@ -129,10 +145,31 @@ func (r *Registry) WalkFS(fsys fs.FS, dir string) error {
 		if entry.IsDir() || !strings.HasSuffix(strings.ToLower(entry.Name()), ".sql") {
 			continue
 		}
-		if err := r.LoadFS(fsys, path.Join(dir, entry.Name())); err != nil {
+
+		err := r.LoadFS(fsys, path.Join(dir, entry.Name()))
+		if err != nil {
 			return err
 		}
 	}
 
 	return nil
+}
+
+// Has checks if a query with the given name exists in the registry.
+func (r *Registry) Has(name string) bool {
+	_, ok := r.queries[name]
+
+	return ok
+}
+
+// Queries returns a sorted list of all query names in the registry.
+func (r *Registry) Queries() []string {
+	queries := make([]string, 0, len(r.queries))
+	for name := range r.queries {
+		queries = append(queries, name)
+	}
+
+	sort.Strings(queries)
+
+	return queries
 }

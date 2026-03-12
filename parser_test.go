@@ -119,14 +119,14 @@ SELECT * FROM users WHERE status = ?`,
 			name:  "windows line endings",
 			input: "-- name: GetUser\r\nSELECT * FROM users;\r\n",
 			want: map[string]string{
-				"GetUser": "SELECT * FROM users;",
+				"GetUser": "SELECT * FROM users",
 			},
 		},
 		{
 			name:  "query before first name ignored",
 			input: "SELECT * FROM ignored;\n-- name: Valid\nSELECT 42;",
 			want: map[string]string{
-				"Valid": "SELECT 42;",
+				"Valid": "SELECT 42",
 			},
 		},
 		{
@@ -144,6 +144,7 @@ SELECT * FROM users WHERE status = ?`,
 				if err == nil {
 					t.Error("expected error, got nil")
 				}
+
 				return
 			}
 
@@ -159,8 +160,10 @@ SELECT * FROM users WHERE status = ?`,
 				gotSQL, ok := got[name]
 				if !ok {
 					t.Errorf("query %q not found in result", name)
+
 					continue
 				}
+
 				if gotSQL != wantSQL {
 					t.Errorf("query %q:\ngot  %q\nwant %q", name, gotSQL, wantSQL)
 				}

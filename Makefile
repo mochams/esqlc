@@ -20,3 +20,6 @@ test: vet
 
 clean: 
 	go clean
+
+lint:
+	golangci-lint run

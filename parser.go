@@ -16,28 +16,32 @@ const prefix = "-- name: "
 func parse(r io.Reader) (map[string]string, error) {
 	queries := make(map[string]string)
 
-	var currentName string
-	var currentSQL strings.Builder
+	var (
+		currentName string
+		currentSQL  strings.Builder
+	)
 
 	reader := bufio.NewReader(r)
 
 	for {
 		line, err := reader.ReadString('\n')
-		// line = trimEOL(line)
-		// line = strings.TrimRight(line, " \n")
-		// line = strings.TrimRight(line, "\r\n")
 		line = strings.TrimSpace(line)
 
 		if strings.HasPrefix(line, prefix) {
 			// If we were building a query, save it before starting a new one
 			if currentName != "" {
 				sql := strings.TrimSpace(currentSQL.String())
-				if err := flushQuery(queries, currentName, sql); err != nil {
+
+				err := flushQuery(queries, currentName, sql)
+				if err != nil {
 					return nil, err
 				}
+
 				currentSQL.Reset()
 			}
+
 			currentName = strings.TrimSpace(line[len(prefix):])
+
 			continue
 		}
 
@@ -57,7 +61,9 @@ func parse(r io.Reader) (map[string]string, error) {
 
 	if currentName != "" {
 		sql := strings.TrimSpace(currentSQL.String())
-		if err := flushQuery(queries, currentName, sql); err != nil {
+
+		err := flushQuery(queries, currentName, sql)
+		if err != nil {
 			return nil, err
 		}
 	}
@@ -71,9 +77,13 @@ func flushQuery(queries map[string]string, name, sql string) error {
 	if sql == "" {
 		return fmt.Errorf("query %q has empty body", name)
 	}
+
 	if _, exists := queries[name]; exists {
 		return fmt.Errorf("duplicate query name %q", name)
 	}
+
+	sql = strings.TrimRight(sql, ";")
 	queries[name] = sql
+
 	return nil
 }

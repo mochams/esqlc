@@ -1,206 +1,292 @@
 package esqlc
 
-import "strings"
+// Predicate represents a SQL condition that evaluates to a boolean.
+type Predicate func(*sqlBuilder)
 
-// Predicate represents a SQL condition that can be built into a query.
-type Predicate interface {
-	build(*builder)
-}
-
-// cond represents a simple condition with an expression and arguments.
-// For example, "status = ?" with argument "active".
-// It implements the Predicate interface.
-type cond struct {
-	expr string
-	args []any
-}
-
-// build implements the Predicate interface for cond.
-func (c *cond) build(b *builder) {
-	b.write(c.expr)
-	b.args = append(b.args, c.args...)
-}
-
-// Cond is a helper function to create a simple condition predicate.
-// Example usage: Cond("age > ?", 30) creates condition "age > ?" with argument 30.
+// Cond creates a simple predicate with the given expression and arguments.
+// Example usage: Cond("age > ?", 30)
+// creates a predicate that builds "age > ?" with argument 30.
 func Cond(expr string, args ...any) Predicate {
-	return &cond{expr: expr, args: args}
-}
-
-// and represents a logical AND of multiple predicates.
-// It implements the Predicate interface.
-type and struct {
-	preds []Predicate
-}
-
-// build implements the Predicate interface for and.
-func (a *and) build(b *builder) {
-	switch len(a.preds) {
-	case 0:
-		return
-	case 1:
-		a.preds[0].build(b)
-		return
+	return func(b *sqlBuilder) {
+		b.write(expr)
+		b.args = append(b.args, args...)
 	}
-
-	b.write("(")
-	for i, p := range a.preds {
-		if i > 0 {
-			b.write(" AND ")
-		}
-		p.build(b)
-	}
-	b.write(")")
 }
 
-// And is a helper function to combine multiple predicates with a logical AND.
-// Example usage: And(Cond("age > ?", 30), Cond("status = ?", "active"))
+// And combines multiple predicates with a logical AND.
+// It handles zero, one, or multiple predicates appropriately.
+// Example usage: And(CondX("age > ?", 30), CondX("status = ?", "active"))
 // creates "(age > ? AND status = ?)" with arguments 30 and "active".
 func And(preds ...Predicate) Predicate {
-	return &and{preds: preds}
-}
-
-// or represents a logical OR of multiple predicates.
-// It implements the Predicate interface.
-type or struct {
-	preds []Predicate
-}
-
-// build implements the Predicate interface for or.
-func (o *or) build(b *builder) {
-	switch len(o.preds) {
-	case 0:
-		return
-	case 1:
-		o.preds[0].build(b)
-		return
-	}
-
-	b.write("(")
-	for i, p := range o.preds {
-		if i > 0 {
-			b.write(" OR ")
+	return func(b *sqlBuilder) {
+		if len(preds) == 0 {
+			return
 		}
-		p.build(b)
+
+		if len(preds) == 1 {
+			preds[0](b)
+
+			return
+		}
+
+		b.writeByte('(')
+
+		for i := range preds {
+			if i > 0 {
+				b.write(" AND ")
+			}
+
+			preds[i](b)
+		}
+
+		b.writeByte(')')
 	}
-	b.write(")")
 }
 
-// Or is a helper function to combine multiple predicates with a logical OR.
-// Example usage: Or(Cond("age < ?", 18), Cond("status = ?", "inactive"))
-// creates "(age < ? OR status = ?)" with arguments 18 and "inactive".
+// Or combines multiple predicates with a logical OR.
+// It handles zero, one, or multiple predicates appropriately.
+// Example usage: Or(CondX("age < ?", 18), CondX("age > ?", 65))
+// creates "(age < ? OR age > ?)" with arguments 18 and 65.
 func Or(preds ...Predicate) Predicate {
-	return &or{preds: preds}
+	return func(b *sqlBuilder) {
+		if len(preds) == 0 {
+			return
+		}
+
+		if len(preds) == 1 {
+			preds[0](b)
+
+			return
+		}
+
+		b.writeByte('(')
+
+		for i := range preds {
+			if i > 0 {
+				b.write(" OR ")
+			}
+
+			preds[i](b)
+		}
+
+		b.writeByte(')')
+	}
 }
 
-// not represents a logical NOT of a predicate.
-// It implements the Predicate interface.
-type not struct {
-	pred Predicate
+// In creates a predicate for an IN clause with the specified column and values.
+// Example usage: In("id", 1, 2, 3)
+// creates "id IN (?, ?, ?)" with arguments 1, 2, and 3.
+func In(col string, vals ...any) Predicate {
+	return func(b *sqlBuilder) {
+		if len(vals) == 0 {
+			return
+		}
+
+		b.write(col)
+		b.write(" IN (")
+
+		for i := range vals {
+			if i > 0 {
+				b.write(", ")
+			}
+
+			b.writeByte('?')
+			b.arg(vals[i])
+		}
+
+		b.writeByte(')')
+	}
 }
 
-// build implements the Predicate interface for not.
-func (n *not) build(b *builder) {
-	b.write("NOT (")
-	n.pred.build(b)
-	b.write(")")
+// NotIn creates a predicate for a NOT IN clause with the specified column and values.
+// Example usage: NotIn("id", 1, 2, 3)
+// creates "id NOT IN (?, ?, ?)" with arguments 1, 2, and 3.
+func NotIn(col string, vals ...any) Predicate {
+	return func(b *sqlBuilder) {
+		if len(vals) == 0 {
+			return
+		}
+
+		b.write(col)
+		b.write(" NOT IN (")
+
+		for i := range vals {
+			if i > 0 {
+				b.write(", ")
+			}
+
+			b.writeByte('?')
+			b.arg(vals[i])
+		}
+
+		b.writeByte(')')
+	}
 }
 
-// Not is a helper function to negate a predicate with a logical NOT.
-// Example usage: Not(Cond("status = ?", "active"))
+// Not creates a predicate that negates the given predicate with a logical NOT.
+// Example usage: Not(CondX("status = ?", "active"))
 // creates "NOT (status = ?)" with argument "active".
 func Not(pred Predicate) Predicate {
-	return &not{pred: pred}
+	return func(b *sqlBuilder) {
+		b.write("NOT (")
+		pred(b)
+		b.writeByte(')')
+	}
 }
 
-// IsNull checks if a column is NULL.
-// It builds "col IS NULL"
-func IsNull(col string) Predicate {
-	return Cond(col + " IS NULL")
-}
-
-// IsNotNull checks if a column is NOT NULL.
-// It builds "col IS NOT NULL"
-func IsNotNull(col string) Predicate {
-	return Cond(col + " IS NOT NULL")
-}
-
-// Eq checks if a column equals a value.
-// Eq builds "col = ?"
+// Eq creates a predicate for an equality condition between a column and a value.
+// Example usage: Eq("name", "Alice")
+// creates "name = ?" with argument "Alice".
 func Eq(col string, val any) Predicate {
-	return Cond(col+" = ?", val)
+	return func(b *sqlBuilder) {
+		b.write(col)
+		b.write(" = ?")
+		b.arg(val)
+	}
 }
 
-// Neq checks if a column does not equal a value.
-// Neq builds "col <> ?"
+// Neq creates a predicate for an inequality condition between a column and a value.
+// Example usage: Neq("status", "inactive")
+// creates "status <> ?" with argument "inactive".
 func Neq(col string, val any) Predicate {
-	return Cond(col+" <> ?", val)
+	return func(b *sqlBuilder) {
+		b.write(col)
+		b.write(" <> ?")
+		b.arg(val)
+	}
 }
 
-// Gt checks if a column is greater than a value.
-// Gt builds "col > ?"
+// Gt creates a predicate for a greater-than condition between a column and a value.
+// Example usage: Gt("age", 30)
+// creates "age > ?" with argument 30.
 func Gt(col string, val any) Predicate {
-	return Cond(col+" > ?", val)
+	return func(b *sqlBuilder) {
+		b.write(col)
+		b.write(" > ?")
+		b.arg(val)
+	}
 }
 
-// Gte checks if a column is greater than or equal to a value.
-// Gte builds "col >= ?"
+// Gte creates a predicate for a greater-than-or-equal condition between a column and a value.
+// Example usage: Gte("age", 18)
+// creates "age >= ?" with argument 18.
 func Gte(col string, val any) Predicate {
-	return Cond(col+" >= ?", val)
+	return func(b *sqlBuilder) {
+		b.write(col)
+		b.write(" >= ?")
+		b.arg(val)
+	}
 }
 
-// Lt checks if a column is less than a value.
-// Lt builds "col < ?"
+// Lt creates a predicate for a less-than condition between a column and a value.
+// Example usage: Lt("age", 65)
+// creates "age < ?" with argument 65.
 func Lt(col string, val any) Predicate {
-	return Cond(col+" < ?", val)
+	return func(b *sqlBuilder) {
+		b.write(col)
+		b.write(" < ?")
+		b.arg(val)
+	}
 }
 
-// Lte checks if a column is less than or equal to a value.
-// Lte builds "col <= ?"
+// Lte creates a predicate for a less-than-or-equal condition between a column and a value.
+// Example usage: Lte("age", 65)
+// creates "age <= ?" with argument 65.
 func Lte(col string, val any) Predicate {
-	return Cond(col+" <= ?", val)
-}
-
-// Like checks if a column matches a pattern using SQL LIKE.
-// Like builds "col LIKE ?"
-func Like(col string, val string) Predicate {
-	return Cond(col+" LIKE ?", val)
-}
-
-// ILike checks if a column matches a pattern using SQL ILIKE (case-insensitive).
-// ILike builds "col ILIKE ?"
-func ILike(col string, pattern string) Predicate {
-	return Cond(col+" ILIKE ?", pattern)
-}
-
-// In checks if a column's value is in a list of values.
-// In builds "col IN (?, ?, ...)" with the appropriate number of placeholders.
-func In(col string, vals ...any) Predicate {
-	if len(vals) == 0 {
-		panic("In: at least one value required")
+	return func(b *sqlBuilder) {
+		b.write(col)
+		b.write(" <= ?")
+		b.arg(val)
 	}
+}
 
-	placeholders := make([]string, len(vals))
-	for i := range vals {
-		placeholders[i] = "?"
+// Null creates a predicate for an IS NULL condition.
+// Example usage: Null("deleted_at")
+// creates "deleted_at IS NULL".
+func Null(col string) Predicate {
+	return func(b *sqlBuilder) {
+		b.write(col)
+		b.write(" IS NULL")
 	}
-	return Cond(col+" IN ("+strings.Join(placeholders, ", ")+")", vals...)
 }
 
-// NotIn checks if a column's value is not in a list of values.
-// NotIn builds "col NOT IN (?, ?, ...)" with the appropriate number of placeholders.
-func NotIn(col string, vals ...any) Predicate {
-	return Not(In(col, vals...))
+// NotNull creates a predicate for an IS NOT NULL condition.
+// Example usage: NotNull("deleted_at")
+// creates "deleted_at IS NOT NULL".
+func NotNull(col string) Predicate {
+	return func(b *sqlBuilder) {
+		b.write(col)
+		b.write(" IS NOT NULL")
+	}
 }
 
-// Between checks if a column's value is between two values (inclusive).
-// Between builds "col BETWEEN ? AND ?" with the start and end values as arguments.
-func Between(col string, from, to any) Predicate {
-	return Cond(col+" BETWEEN ? AND ?", from, to)
+// Like creates a predicate for a LIKE condition.
+// Example usage: Like("name", "%john%")
+// creates "name LIKE ?" with argument "%john%".
+func Like(col, pattern string) Predicate {
+	return func(b *sqlBuilder) {
+		b.write(col)
+		b.write(" LIKE ?")
+		b.arg(pattern)
+	}
 }
 
-// BetweenExclusive checks if a column's value is between two values (exclusive).
-// It builds "(col > ? AND col < ?)" with the start and end values as arguments.
-func BetweenExclusive(col string, from, to any) Predicate {
-	return And(Gt(col, from), Lt(col, to))
+// NotLike creates a predicate for a NOT LIKE condition.
+// Example usage: NotLike("name", "%john%")
+// creates "name NOT LIKE ?" with argument "%john%".
+func NotLike(col, pattern string) Predicate {
+	return func(b *sqlBuilder) {
+		b.write(col)
+		b.write(" NOT LIKE ?")
+		b.arg(pattern)
+	}
+}
+
+// ILike creates a predicate for a case-insensitive ILIKE condition (Postgres only).
+// Example usage: ILike("name", "%john%")
+// creates "name ILIKE ?" with argument "%john%".
+func ILike(col, pattern string) Predicate {
+	return func(b *sqlBuilder) {
+		b.write(col)
+		b.write(" ILIKE ?")
+		b.arg(pattern)
+	}
+}
+
+// Between creates a predicate for a BETWEEN condition with the specified column and range values.
+// Example usage: Between("age", 18, 65)
+// creates "age BETWEEN ? AND ?" with arguments 18 and 65.
+func Between(col string, low, high any) Predicate {
+	return func(b *sqlBuilder) {
+		b.write(col)
+		b.write(" BETWEEN ? AND ?")
+		b.arg(low)
+		b.arg(high)
+	}
+}
+
+// RangeOpen creates a predicate for an open range condition with the specified column and range values.
+// Example usage: RangeOpen("age", 18, 65)
+// creates "age > ? AND age < ?" with arguments 18 and 65.
+func RangeOpen(col string, low, high any) Predicate {
+	return func(b *sqlBuilder) {
+		b.write(col)
+		b.write(" > ? AND ")
+		b.write(col)
+		b.write(" < ?")
+		b.arg(low)
+		b.arg(high)
+	}
+}
+
+// NotBetween creates a predicate for a NOT BETWEEN condition with the specified column and range values.
+// Example usage: NotBetween("age", 18, 65)
+// creates "age NOT BETWEEN ? AND ?" with arguments 18 and 65.
+func NotBetween(col string, low, high any) Predicate {
+	return func(b *sqlBuilder) {
+		b.write(col)
+		b.write(" NOT BETWEEN ? AND ?")
+		b.arg(low)
+		b.arg(high)
+	}
 }
